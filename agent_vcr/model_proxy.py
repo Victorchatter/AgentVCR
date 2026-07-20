@@ -49,6 +49,31 @@ class _Handler(BaseHTTPRequestHandler):
             req = {}
         streaming = bool(req.get("stream"))
         provider = self._provider()
+
+        if self.server.mode == "playback":
+            rec = self.server.tape.pop_model_response() if self.server.tape else None
+            if rec is None:
+                # ponytail: report next expected seq as count+1; exact seq not tracked for playback.
+                next_seq = (self.server._playback_consumed + 1)
+                self.server._playback_failed = True
+                payload = json.dumps({"error": "playback exhausted", "seq": next_seq}).encode()
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            self.server._playback_consumed += 1
+            body = rec["body"].encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", rec.get("content_type", "application/json"))
+            if rec.get("content_encoding"):
+                self.send_header("Content-Encoding", rec["content_encoding"])
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         base = self.server.upstreams[provider]
         u = urlparse(base)
         conn_cls = http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection
@@ -137,6 +162,8 @@ class ModelProxy:
         srv.tape = self.tape
         srv.upstreams = self.upstreams
         srv.mode = self.mode
+        srv._playback_consumed = 0
+        srv._playback_failed = False
         self.port = srv.server_address[1]  # in case port was 0
         self._srv = srv
         self._thread = threading.Thread(target=srv.serve_forever, daemon=True)
@@ -144,6 +171,9 @@ class ModelProxy:
 
     def base_url(self):
         return f"http://{self.host}:{self.port}"
+
+    def playback_failed(self):
+        return bool(self._srv and self._srv._playback_failed)
 
     def stop(self):
         if self._srv:
@@ -192,6 +222,24 @@ def _selfcheck() -> None:
     assert evs[1]["kind"] == "model_response" and evs[1]["seq"] == evs[0]["seq"]
     assert evs[1]["usage"] == {"input_tokens": 3, "output_tokens": 1}, evs[1]["usage"]
     print("model_proxy selfcheck OK")
+
+    # playback: no upstream call, returns recorded body
+    pb_tape = Tape(tmp, "replay")
+    mp2 = ModelProxy("127.0.0.1", 0, pb_tape,
+                     {"anthropic": "http://127.0.0.1:1", "openai": "http://127.0.0.1:1"}, "playback")
+    mp2.start()
+    c2 = http.client.HTTPConnection("127.0.0.1", mp2.port)
+    c2.request("POST", "/v1/messages", body=b'{"model":"claude-3","stream":false,"messages":[]}',
+               headers={"Content-Type": "application/json"})
+    r3 = c2.getresponse(); d3 = r3.read().decode()
+    assert r3.status == 200 and "hi" in d3, (r3.status, d3)
+    # second request: queue exhausted -> 500
+    c2.request("POST", "/v1/messages", body=b'{}', headers={"Content-Type": "application/json"})
+    r4 = c2.getresponse(); d4 = r4.read().decode()
+    assert r4.status == 500 and "playback exhausted" in d4, (r4.status, d4)
+    assert mp2.playback_failed()
+    c2.close(); mp2.stop()
+    print("model_proxy playback selfcheck OK")
 
 
 if __name__ == "__main__":
