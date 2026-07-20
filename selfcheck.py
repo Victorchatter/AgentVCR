@@ -163,6 +163,35 @@ def main() -> int:
     assert rc != 0, (rc, out, err)
     assert "miss" in (err + out).lower(), (err, out)
 
+    # ---- MCP handshake before tools/call (locks Critical 1) ----
+    # A real agent sends initialize/notifications/initialized/tools/list BEFORE
+    # any tools/call. The replay proxy must forward metadata to the lazily
+    # spawned real server and only stub the recorded tools/call from the tape.
+    handshake = [
+        json.dumps({"jsonrpc": "2.0", "id": 100, "method": "initialize", "params": {}}),
+        json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json.dumps({"jsonrpc": "2.0", "id": 101, "method": "tools/list"}),
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                    "params": {"name": "read_file", "arguments": {"path": "/etc/hosts"}}}),
+    ]
+    rc, out, err = run_stdio_proxy(handshake, tape_path, "replay", echo_path=echo_path)
+    assert rc == 0, (rc, out, err)
+    lines = [l for l in out.strip().splitlines() if l]
+    ids, stub = [], None
+    for l in lines:
+        try:
+            m = json.loads(l)
+        except json.JSONDecodeError:
+            continue
+        if "id" in m:
+            ids.append(m["id"])
+        if m.get("id") == 1 and "result" in m:
+            stub = m
+    # metadata (initialize, tools/list) was forwarded to the real server and replied
+    assert 100 in ids and 101 in ids, (ids, out, err)
+    # the recorded tools/call (id 1) is stubbed from the tape, not forwarded
+    assert stub is not None and "ECHO:" in stub["result"]["content"][0]["text"], (stub, out, err)
+
     up.shutdown(); up.server_close()
     print("selfcheck OK")
     return 0

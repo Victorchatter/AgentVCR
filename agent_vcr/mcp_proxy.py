@@ -30,6 +30,8 @@ class StdioMcpProxy:
         self.real_env = real_env
         self._proc = None  # lazily spawned real server
         self._calls: dict = {}  # id -> {seq, tool, args, ah}
+        self._pump_started = False
+        self._pump_thread = None
 
     def _ensure_server(self):
         if self._proc is None:
@@ -55,6 +57,17 @@ class StdioMcpProxy:
         self._calls[msg_id] = {"seq": seq, "tool": tool, "args_hash": ah}
         return seq
 
+    def _replay_record_call(self, msg_id: int, tool: str, args: dict) -> int:
+        # Important 2: passthrough in replay must grow the tape via
+        # append_replay_event (write_event raises in non-record mode).
+        ah = args_hash(args)
+        seq = self.tape.append_replay_event({
+            "kind": "tool_call", "server": self.server_name, "tool": tool,
+            "args": args, "args_hash": ah,
+        })
+        self._calls[msg_id] = {"seq": seq, "tool": tool, "args_hash": ah}
+        return seq
+
     def _stub_result(self, msg_id: int, tool: str, args: dict) -> bool:
         """Return True on hit, False on miss."""
         ah = args_hash(args)
@@ -69,10 +82,26 @@ class StdioMcpProxy:
             return self._run_record()
         return self._run_replay()
 
+    def _abort(self, exc: Exception, *, replay: bool) -> int:
+        # Minor 9: MCP server unreachable — write run_aborted, exit nonzero.
+        reason = f"mcp server '{self.server_name}' unreachable: {exc}"
+        ev = {"kind": "run_aborted", "reason": reason}
+        try:
+            if replay:
+                self.tape.append_replay_event(ev)
+            else:
+                self.tape.write_event(ev)
+        except Exception:
+            pass
+        sys.stderr.write(f"agent-vcr: {reason}\n")
+        return 3
+
     # ---- record: proxy everything to the real server, capture tools/call ----
     def _run_record(self) -> int:
-        proc = self._ensure_server()
-        import threading
+        try:
+            proc = self._ensure_server()
+        except (OSError, FileNotFoundError, subprocess.SubprocessError) as e:
+            return self._abort(e, replay=False)
 
         def server_to_agent():
             for line in proc.stdout:
@@ -99,6 +128,54 @@ class StdioMcpProxy:
         return 0
 
     # ---- replay/playback: stub from tape; passthrough spawns server on miss ----
+    # ponytail: in v1, replay forwards non-tools/call traffic (initialize,
+    # notifications/initialized, tools/list) to a lazily-spawned real MCP
+    # server. These are side-effect-free metadata; only tools/call is stubbed
+    # from the tape. Upgrade path: record+replay metadata (initialize/tools/list
+    # responses) so --playback can be fully offline without spawning a server.
+    def _ensure_pump(self):
+        if self._pump_started:
+            return
+        try:
+            self._ensure_server()
+        except (OSError, FileNotFoundError, subprocess.SubprocessError) as e:
+            raise _ServerUnreachable(e) from e
+        self._pump_started = True
+
+        def server_to_agent():
+            for line in self._proc.stdout:
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    sys.stdout.write(line); sys.stdout.flush()
+                    continue
+                mid = msg.get("id")
+                if mid is not None and mid in self._calls and "result" in msg:
+                    c = self._calls.pop(mid)
+                    # Important 2: tape grows during passthrough-replay.
+                    self.tape.append_replay_event({
+                        "kind": "tool_result", "seq": c["seq"],
+                        "server": self.server_name, "tool": c["tool"],
+                        "args_hash": c["args_hash"], "result": msg["result"],
+                    })
+                sys.stdout.write(line); sys.stdout.flush()
+
+        self._pump_thread = threading.Thread(target=server_to_agent, daemon=True)
+        self._pump_thread.start()
+
+    def _drain_pump(self):
+        # On stdin EOF, close the server's stdin so it can exit, then briefly
+        # join the pump so pending server responses are flushed to the agent.
+        if self._pump_started and self._proc is not None and self._proc.stdin is not None:
+            try:
+                self._proc.stdin.close()
+            except Exception:
+                pass
+            if self._pump_thread is not None:
+                self._pump_thread.join(timeout=2)
+
     def _run_replay(self) -> int:
         for line in sys.stdin:
             try:
@@ -106,9 +183,13 @@ class StdioMcpProxy:
             except json.JSONDecodeError:
                 continue
             if not _is_tools_call(msg):
-                # forward non-tools/call traffic to a real server only if we have one
-                if self._proc is not None:
-                    self._send(msg, "server")
+                # Critical 1: forward non-tools/call traffic (initialize,
+                # notifications/initialized, tools/list) to the real server.
+                try:
+                    self._ensure_pump()
+                except _ServerUnreachable as e:
+                    return self._abort(e.orig, replay=True)
+                self._send(msg, "server")
                 continue
             msg_id = msg["id"]
             tool, args = _tools_call_info(msg)
@@ -116,13 +197,14 @@ class StdioMcpProxy:
                 continue
             # miss
             if self.on_miss == "passthrough":
-                proc = self._ensure_server()
+                try:
+                    self._ensure_pump()
+                except _ServerUnreachable as e:
+                    return self._abort(e.orig, replay=True)
+                # Important 2: record via append_replay_event (replay mode).
+                self._replay_record_call(msg_id, tool, args)
                 self._send(msg, "server")
-                # remember to capture the response when it comes back; reuse record path
-                self._record_call(msg_id, tool, args)
-                # ponytail: simplest correct passthrough = fall back to full record loop.
-                # Hand off to the record loop for the rest of this process.
-                return self._run_record_after_passthrough()
+                continue
             # strict miss
             sys.stderr.write(f"agent-vcr: tool miss (server={self.server_name} tool={tool} "
                              f"args_hash={args_hash(args)})\n")
@@ -130,11 +212,15 @@ class StdioMcpProxy:
                         "error": {"code": -32603, "message": "agent-vcr: unmatched tool call (strict miss)"}},
                        "agent")
             return 2
+        self._drain_pump()
         return 0
 
-    def _run_record_after_passthrough(self) -> int:
-        # Reuse record semantics: server->agent pump captures results for pending _calls.
-        return self._run_record()
+
+class _ServerUnreachable(Exception):
+    """Internal sentinel: _ensure_server failed inside _ensure_pump."""
+    def __init__(self, orig: Exception):
+        self.orig = orig
+        super().__init__(str(orig))
 
 
 class _McpHttpHandler(BaseHTTPRequestHandler):
@@ -180,6 +266,7 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
                 self.end_headers(); self.wfile.write(msg); return
 
         # record or passthrough: forward to real upstream, capture tools/call
+        # Important 2: passthrough-replay must also record via append_replay_event.
         base = self.server.upstreams.get(server)
         if not base:
             self.send_error(404, f"unknown mcp server: {server}"); return
@@ -191,14 +278,26 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
         conn.request(method, rest, body=raw, headers=out_headers)
         resp = conn.getresponse()
 
+        is_tools_call = req.get("method") == "tools/call" and "id" in req
+        tool = (req.get("params") or {}).get("name") if is_tools_call else None
+        args = (req.get("params") or {}).get("arguments") or {} if is_tools_call else {}
+        # Record tool_call when: pure record mode, OR (passthrough + replay-mode
+        # fell through to live upstream). Use write_event for record,
+        # append_replay_event for passthrough-replay (Important 2).
+        passthrough_replay = (self.server.mode in ("replay", "playback")
+                              and self.server.on_miss == "passthrough")
         seq = None
-        if self.server.mode == "record" and req.get("method") == "tools/call" and "id" in req:
-            tool = (req.get("params") or {}).get("name")
-            args = (req.get("params") or {}).get("arguments") or {}
-            seq = self.server.tape.write_event({
-                "kind": "tool_call", "server": server, "tool": tool,
-                "args": args, "args_hash": args_hash(args),
-            })
+        if is_tools_call and (self.server.mode == "record" or passthrough_replay):
+            if self.server.mode == "record":
+                seq = self.server.tape.write_event({
+                    "kind": "tool_call", "server": server, "tool": tool,
+                    "args": args, "args_hash": args_hash(args),
+                })
+            else:
+                seq = self.server.tape.append_replay_event({
+                    "kind": "tool_call", "server": server, "tool": tool,
+                    "args": args, "args_hash": args_hash(args),
+                })
 
         self.send_response(resp.status)
         for k, v in resp.getheaders():
@@ -221,16 +320,20 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
         conn.close()
 
-        if seq is not None and self.server.mode == "record":
+        if seq is not None:
             result = _find_rpc_result(req.get("id"), bytes(captured).decode("utf-8", "replace"),
                                      resp.getheader("Content-Type") or "")
             if result is not None:
-                self.server.tape.write_event({
+                result_ev = {
                     "kind": "tool_result", "seq": seq, "server": server,
-                    "tool": (req.get("params") or {}).get("name"),
-                    "args_hash": args_hash((req.get("params") or {}).get("arguments") or {}),
+                    "tool": tool,
+                    "args_hash": args_hash(args),
                     "result": result,
-                })
+                }
+                if self.server.mode == "record":
+                    self.server.tape.write_event(result_ev)
+                else:
+                    self.server.tape.append_replay_event(result_ev)
 
     def do_POST(self):
         try: self._handle("POST")
@@ -338,6 +441,38 @@ def _selfcheck() -> None:
                        "params": {"name": "read_file", "arguments": {"path": "/never"}}})
     rc, out = run_proxy([miss], "replay", on_miss="strict")
     assert rc != 0, (rc, out)
+
+    # Important 2: passthrough-replay records a new tool_call+tool_result via
+    # append_replay_event (tape grows, marked replay_extended).
+    pass_call = json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                            "params": {"name": "read_file", "arguments": {"path": "/new"}}})
+    rc, out = run_proxy([pass_call], "replay", on_miss="passthrough")
+    assert rc == 0, (rc, out)
+    resp = json.loads(out.strip().splitlines()[-1])
+    assert resp["id"] == 3 and "echo:" in resp["result"]["content"][0]["text"], resp
+    r3 = Tape(tmp, "replay")
+    grown = [e for e in r3.events() if e.get("replay_extended")]
+    kinds_grown = [e["kind"] for e in grown]
+    assert kinds_grown == ["tool_call", "tool_result"], kinds_grown
+    assert grown[1]["result"]["content"][0]["text"] == 'echo:{"path": "/new"}', grown[1]
+
+    # Minor 9: unreachable MCP server in record mode writes run_aborted, exits nonzero.
+    tmp_bad = os.path.join(tempfile.mkdtemp(), "bad.jsonl")
+    bad_tape = Tape(tmp_bad, "record")
+    bad_proxy = StdioMcpProxy("missing", bad_tape, "record", "strict",
+                             ["agent-vcr-no-such-binary-xyz"])
+    old_in, old_out = sys.stdin, sys.stdout
+    sys.stdin = io.StringIO("")
+    sys.stdout = io.StringIO()
+    try:
+        rc = bad_proxy.run()
+    finally:
+        sys.stdin, sys.stdout = old_in, old_out
+    bad_tape.close()
+    assert rc == 3, rc
+    rb = Tape(tmp_bad, "replay")
+    aborted = [e for e in rb.events() if e.get("kind") == "run_aborted"]
+    assert aborted and "unreachable" in aborted[0]["reason"], aborted
     print("mcp stdio selfcheck OK")
 
     # Streamable HTTP MCP: record then replay-stub
@@ -378,7 +513,24 @@ def _selfcheck() -> None:
                 headers={"Content-Type":"application/json"})
     rr2 = c2.getresponse(); dd2 = rr2.read().decode(); c2.close(); hp2.stop()
     assert "http-echo:" in dd2, dd2
-    up.shutdown(); up.server_close()
+    # Important 2 (HTTP): passthrough-replay records a new tool_call+tool_result
+    # via append_replay_event when a replay-mode call misses and falls through.
+    up2 = ThreadingHTTPServer(("127.0.0.1", 0), _Up); up2_port = up2.server_address[1]
+    threading.Thread(target=up2.serve_forever, daemon=True).start()
+    pt2 = Tape(tmp2, "replay")
+    hp3 = HttpMcpProxy("127.0.0.1", 0, pt2, "replay", "passthrough",
+                       {"svc": f"http://127.0.0.1:{up2_port}"})
+    hp3.start()
+    c3 = _hc2.HTTPConnection("127.0.0.1", hp3.port)
+    c3.request("POST", "/svc/mcp", body=json.dumps({"jsonrpc":"2.0","id":9,"method":"tools/call",
+                  "params":{"name":"get","arguments":{"q":"fresh"}}}),
+                headers={"Content-Type":"application/json"})
+    rr3 = c3.getresponse(); dd3 = rr3.read().decode(); c3.close(); hp3.stop()
+    assert "http-echo:" in dd3 and "fresh" in dd3, dd3
+    r3http = Tape(tmp2, "replay")
+    grown = [e for e in r3http.events() if e.get("replay_extended")]
+    assert [e["kind"] for e in grown] == ["tool_call", "tool_result"], grown
+    up.shutdown(); up.server_close(); up2.shutdown(); up2.server_close()
     print("mcp http selfcheck OK")
 
 

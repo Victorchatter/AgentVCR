@@ -241,6 +241,67 @@ def _selfcheck() -> None:
     c2.close(); mp2.stop()
     print("model_proxy playback selfcheck OK")
 
+    # Important 4: SSE streaming path — record a streamed Anthropic response.
+    sse_frames = [
+        json.dumps({"type": "message_start", "message": {"id": "msg_s", "usage": {"input_tokens": 4}}}),
+        json.dumps({"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+                    "usage": {"input_tokens": 4, "output_tokens": 7}}),
+    ]
+    sse_body = "".join(f"data: {f}\n\n" for f in sse_frames).encode("utf-8")
+
+    class UpSSE(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        def log_message(self, *a): pass
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            self.rfile.read(length)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            # write body as a single chunk then terminator
+            self.wfile.write(b"%x\r\n" % len(sse_body) + sse_body + b"\r\n")
+            self.wfile.write(b"0\r\n\r\n")
+    ups = ThreadingHTTPServer(("127.0.0.1", 0), UpSSE); ups_port = ups.server_address[1]
+    threading.Thread(target=ups.serve_forever, daemon=True).start()
+
+    tmps = os.path.join(tempfile.mkdtemp(), "sse.jsonl")
+    stape = Tape(tmps, "record")
+    smp = ModelProxy("127.0.0.1", 0, stape,
+                     {"anthropic": f"http://127.0.0.1:{ups_port}", "openai": "http://127.0.0.1:1"},
+                     "record")
+    smp.start()
+    cs = http.client.HTTPConnection("127.0.0.1", smp.port)
+    cs.request("POST", "/v1/messages",
+               body=b'{"model":"claude","stream":true,"messages":[]}',
+               headers={"Content-Type": "application/json"})
+    rs = cs.getresponse()
+    # client receives the SSE text, chunked-decoded
+    client_body = b""
+    while True:
+        line = rs.fp.readline()
+        if not line:
+            break
+        size = int(line.strip(), 16)
+        if size == 0:
+            rs.fp.read(2)
+            break
+        chunk = rs.fp.read(size); rs.fp.read(2)
+        client_body += chunk
+    client_text = client_body.decode("utf-8")
+    assert "message_start" in client_text and "message_delta" in client_text, client_text
+    assert rs.getheader("Content-Type") == "text/event-stream", rs.getheader("Content-Type")
+    cs.close(); smp.stop(); ups.shutdown(); ups.server_close(); stape.close()
+    # tape has model_request + model_response
+    sr = Tape(tmps, "replay")
+    sevs = sr.events()
+    assert sevs[1]["kind"] == "model_response", sevs
+    assert sevs[1]["content_type"] == "text/event-stream", sevs[1]
+    assert "message_delta" in sevs[1]["body"], sevs[1]["body"]
+    # usage is extracted from the last data: frame (message_delta carries usage)
+    assert sevs[1]["usage"] == {"input_tokens": 4, "output_tokens": 7}, sevs[1]["usage"]
+    print("model_proxy streaming selfcheck OK")
+
 
 if __name__ == "__main__":
     _selfcheck()

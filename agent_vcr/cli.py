@@ -85,6 +85,12 @@ def cmd_replay(args) -> int:
     env = _build_env(tape_path, mode, args.on_miss, model.base_url(), mcp.url_for(""))
     runner = AgentRunner(args.agent_cmd, args.mcp_config, env, mcp.url_for(""), _vcr_bin())
     rc = runner.run()
+    # Important 3: --playback exhaustion must exit nonzero with the missing seq.
+    if args.playback and model.playback_failed():
+        print(f"agent-vcr: playback exhausted before agent finished "
+              f"(see model_response 500 body for missing seq)", file=sys.stderr)
+        tape.close()
+        return 3
     tape.close()
     print(f"agent-vcr: replay done (exit={rc})", file=sys.stderr)
     return rc
@@ -128,7 +134,12 @@ def cmd_list(args) -> int:
 
 
 def cmd_show(args) -> int:
-    t = Tape(args.tape, "replay")
+    # Minor 11: bad JSONL must not crash; report the bad line and return nonzero.
+    try:
+        t = Tape(args.tape, "replay")
+    except (ValueError, FileNotFoundError) as e:
+        print(f"agent-vcr: cannot load tape: {e}", file=sys.stderr)
+        return 2
     for ev in t.events():
         seq = ev.get("seq", "-")
         kind = ev.get("kind")
@@ -157,8 +168,13 @@ def _pretty_body(body) -> str:
 
 
 def cmd_diff(args) -> int:
-    a = Tape(args.tape_a, "replay").events()
-    b = Tape(args.tape_b, "replay").events()
+    # Minor 11: bad JSONL must not crash; report the bad line and return nonzero.
+    try:
+        a = Tape(args.tape_a, "replay").events()
+        b = Tape(args.tape_b, "replay").events()
+    except (ValueError, FileNotFoundError) as e:
+        print(f"agent-vcr: cannot load tape: {e}", file=sys.stderr)
+        return 2
     for i in range(max(len(a), len(b))):
         ea = a[i] if i < len(a) else None
         eb = b[i] if i < len(b) else None
