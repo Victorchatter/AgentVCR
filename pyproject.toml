@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-vcr"
+version = "0.1.0"
+description = "Local, vendor-neutral record/replay for AI agent runs."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [{name = "agent-vcr"}]
+# ponytail: zero runtime deps; stdlib only. Add deps only when a stdlib gap is measured.
+
+[project.scripts]
+agent-vcr = "agent_vcr.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agent_vcr*"]
