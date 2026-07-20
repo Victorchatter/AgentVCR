@@ -1,6 +1,10 @@
+import http.client as _hc
 import json
 import subprocess
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse as _urlparse
 
 from .tape import Tape, args_hash
 
@@ -133,6 +137,153 @@ class StdioMcpProxy:
         return self._run_record()
 
 
+class _McpHttpHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    def log_message(self, *a): pass
+
+    def _split(self):
+        parts = self.path.lstrip("/").split("/", 1)
+        server = parts[0]
+        rest = "/" + parts[1] if len(parts) > 1 else "/"
+        return server, rest
+
+    def _handle(self, method):
+        server, rest = self._split()
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        raw = self.rfile.read(length) if length else b""
+        try:
+            req = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            req = {}
+        is_sse = "text/event-stream" in (self.headers.get("Accept") or "")
+
+        # replay/playback: try stub for tools/call
+        if self.server.mode in ("replay", "playback") and req.get("method") == "tools/call" and "id" in req:
+            tool = (req.get("params") or {}).get("name")
+            args = (req.get("params") or {}).get("arguments") or {}
+            rec = self.server.tape.pop_tool_result(server, tool, args_hash(args))
+            if rec is not None:
+                payload = json.dumps({"jsonrpc": "2.0", "id": req["id"], "result": rec["result"]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers(); self.wfile.write(payload); return
+            if self.server.on_miss == "passthrough":
+                pass  # fall through to live forward + capture
+            else:
+                msg = json.dumps({"error": "agent-vcr: unmatched tool call",
+                                  "server": server, "tool": tool,
+                                  "args_hash": args_hash(args)}).encode()
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(msg)))
+                self.end_headers(); self.wfile.write(msg); return
+
+        # record or passthrough: forward to real upstream, capture tools/call
+        base = self.server.upstreams.get(server)
+        if not base:
+            self.send_error(404, f"unknown mcp server: {server}"); return
+        u = _urlparse(base)
+        cls = _hc.HTTPSConnection if u.scheme == "https" else _hc.HTTPConnection
+        conn = cls(u.netloc, timeout=600)
+        out_headers = {k: v for k, v in self.headers.items()
+                       if k.lower() not in ("host", "content-length", "connection", "transfer-encoding")}
+        conn.request(method, rest, body=raw, headers=out_headers)
+        resp = conn.getresponse()
+
+        seq = None
+        if self.server.mode == "record" and req.get("method") == "tools/call" and "id" in req:
+            tool = (req.get("params") or {}).get("name")
+            args = (req.get("params") or {}).get("arguments") or {}
+            seq = self.server.tape.write_event({
+                "kind": "tool_call", "server": server, "tool": tool,
+                "args": args, "args_hash": args_hash(args),
+            })
+
+        self.send_response(resp.status)
+        for k, v in resp.getheaders():
+            if k.lower() in ("transfer-encoding", "content-length", "connection"):
+                continue
+            self.send_header(k, v)
+        captured = bytearray()
+        streaming = "text/event-stream" in (resp.getheader("Content-Type") or "")
+        if streaming:
+            self.send_header("Transfer-Encoding", "chunked"); self.end_headers()
+            while True:
+                chunk = resp.read(4096)
+                if not chunk: break
+                captured += chunk
+                self.wfile.write(b"%x\r\n" % len(chunk) + chunk + b"\r\n"); self.wfile.flush()
+            self.wfile.write(b"0\r\n\r\n")
+        else:
+            data = resp.read(); captured += data
+            self.send_header("Content-Length", str(len(data))); self.end_headers()
+            self.wfile.write(data)
+        conn.close()
+
+        if seq is not None and self.server.mode == "record":
+            result = _find_rpc_result(req.get("id"), bytes(captured).decode("utf-8", "replace"),
+                                     resp.getheader("Content-Type") or "")
+            if result is not None:
+                self.server.tape.write_event({
+                    "kind": "tool_result", "seq": seq, "server": server,
+                    "tool": (req.get("params") or {}).get("name"),
+                    "args_hash": args_hash((req.get("params") or {}).get("arguments") or {}),
+                    "result": result,
+                })
+
+    def do_POST(self):
+        try: self._handle("POST")
+        except Exception as e: self.send_error(502, str(e))
+    def do_GET(self):
+        try: self._handle("GET")
+        except Exception as e: self.send_error(502, str(e))
+
+
+def _find_rpc_result(rpc_id, body: str, content_type: str):
+    # ponytail: scan for the JSON-RPC response whose id matches; works for JSON and SSE. Upgrade: full SSE parser.
+    if "event-stream" in (content_type or "").lower():
+        for line in body.splitlines():
+            if line.startswith("data:"):
+                try:
+                    obj = json.loads(line[5:].strip())
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("id") == rpc_id and "result" in obj:
+                    return obj["result"]
+        return None
+    try:
+        obj = json.loads(body)
+        if obj.get("id") == rpc_id and "result" in obj:
+            return obj["result"]
+    except json.JSONDecodeError:
+        return None
+    return None
+
+
+class HttpMcpProxy:
+    def __init__(self, host, port, tape, mode, on_miss, upstreams):
+        self.host = host; self.port = port; self.tape = tape
+        self.mode = mode; self.on_miss = on_miss; self.upstreams = upstreams
+        self._srv = None; self._thread = None
+
+    def start(self):
+        srv = ThreadingHTTPServer((self.host, self.port), _McpHttpHandler)
+        srv.tape = self.tape; srv.mode = self.mode; srv.on_miss = self.on_miss
+        srv.upstreams = self.upstreams
+        self.port = srv.server_address[1]
+        self._srv = srv
+        self._thread = threading.Thread(target=srv.serve_forever, daemon=True)
+        self._thread.start()
+
+    def url_for(self, server_name):
+        return f"http://{self.host}:{self.port}/{server_name}"
+
+    def stop(self):
+        if self._srv:
+            self._srv.shutdown(); self._srv.server_close(); self._srv = None
+
+
 def _selfcheck() -> None:
     import io, os, tempfile
     from .tape import Tape
@@ -188,6 +339,47 @@ def _selfcheck() -> None:
     rc, out = run_proxy([miss], "replay", on_miss="strict")
     assert rc != 0, (rc, out)
     print("mcp stdio selfcheck OK")
+
+    # Streamable HTTP MCP: record then replay-stub
+    import http.client as _hc2
+    class _Up(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        def log_message(self, *a): pass
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length",0) or 0))
+            m = json.loads(body)
+            r = {"jsonrpc": "2.0", "id": m["id"],
+                 "result": {"content": [{"type": "text", "text": "http-echo:" + json.dumps(m["params"]["arguments"])}]}}
+            payload = json.dumps(r).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload))); self.end_headers(); self.wfile.write(payload)
+    up = ThreadingHTTPServer(("127.0.0.1", 0), _Up); up_port = up.server_address[1]
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+
+    tmp2 = os.path.join(tempfile.mkdtemp(), "t2.jsonl")
+    rt = Tape(tmp2, "record")
+    hp = HttpMcpProxy("127.0.0.1", 0, rt, "record", "strict", {"svc": f"http://127.0.0.1:{up_port}"})
+    hp.start()
+    c = _hc2.HTTPConnection("127.0.0.1", hp.port)
+    c.request("POST", "/svc/mcp", body=json.dumps({"jsonrpc":"2.0","id":7,"method":"tools/call",
+                 "params":{"name":"get","arguments":{"q":"hi"}}}),
+               headers={"Content-Type":"application/json"})
+    rr = c.getresponse(); dd = rr.read().decode(); c.close(); hp.stop(); rt.close()
+    assert "http-echo:" in dd, dd
+    r2 = Tape(tmp2, "replay")
+    assert [e["kind"] for e in r2.events()] == ["tool_call", "tool_result"], r2.events()
+    # replay stub
+    pt = Tape(tmp2, "replay")
+    hp2 = HttpMcpProxy("127.0.0.1", 0, pt, "replay", "strict", {"svc": "http://127.0.0.1:1"})
+    hp2.start()
+    c2 = _hc2.HTTPConnection("127.0.0.1", hp2.port)
+    c2.request("POST", "/svc/mcp", body=json.dumps({"jsonrpc":"2.0","id":7,"method":"tools/call",
+                  "params":{"name":"get","arguments":{"q":"hi"}}}),
+                headers={"Content-Type":"application/json"})
+    rr2 = c2.getresponse(); dd2 = rr2.read().decode(); c2.close(); hp2.stop()
+    assert "http-echo:" in dd2, dd2
+    up.shutdown(); up.server_close()
+    print("mcp http selfcheck OK")
 
 
 if __name__ == "__main__":
