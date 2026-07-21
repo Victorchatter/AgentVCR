@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# tapes are run artifacts
+tapes/
+*.vcr.bak
+
+# editor / os
+.vscode/
+.idea/
+.DS_Store

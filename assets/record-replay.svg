@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="sarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="sarrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b45309"/>
+    </marker>
+    <marker id="sarrB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9333ea"/>
+    </marker>
+    <marker id="sarrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+  </defs>
+  <rect width="960" height="560" fill="#ffffff"/>
+
+  <text x="480" y="30" text-anchor="middle" font-size="18" font-weight="700" fill="#0f172a">Record vs. Replay — the same proxies, different traffic</text>
+
+  <!-- two columns -->
+  <!-- RECORD -->
+  <text x="240" y="62" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3a8a">RECORD  (capture the run)</text>
+  <g font-size="11" fill="#334155">
+    <rect x="60" y="78" width="80" height="26" rx="6" fill="#eef2ff" stroke="#6366f1"/>
+    <text x="100" y="95" text-anchor="middle" font-weight="600">Agent</text>
+    <rect x="200" y="78" width="80" height="26" rx="6" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="240" y="95" text-anchor="middle" font-weight="600">ModelProxy</text>
+    <rect x="340" y="78" width="80" height="26" rx="6" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="380" y="95" text-anchor="middle" font-weight="600">Provider</text>
+    <rect x="200" y="430" width="80" height="26" rx="6" fill="#fef3c7" stroke="#b45309"/>
+    <text x="240" y="447" text-anchor="middle" font-weight="600">Tape</text>
+    <rect x="60" y="260" width="80" height="26" rx="6" fill="#eef2ff" stroke="#6366f1"/>
+    <text x="100" y="277" text-anchor="middle" font-weight="600">Agent</text>
+    <rect x="200" y="260" width="80" height="26" rx="6" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="240" y="277" text-anchor="middle" font-weight="600">MCPProxy</text>
+    <rect x="340" y="260" width="80" height="26" rx="6" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="380" y="277" text-anchor="middle" font-weight="600">MCP srv</text>
+  </g>
+
+  <!-- record model: agent -> proxy -> provider, provider -> proxy -> agent, proxy -> tape -->
+  <line x1="140" y1="100" x2="200" y2="100" stroke="#334155" stroke-width="1.6" marker-end="url(#sarr)"/>
+  <text x="170" y="92" text-anchor="middle" font-size="10">request</text>
+  <line x1="280" y1="112" x2="340" y2="112" stroke="#2563eb" stroke-width="1.6" marker-end="url(#sarrG)"/>
+  <text x="310" y="104" text-anchor="middle" font-size="10">forward</text>
+  <line x1="340" y1="124" x2="280" y2="124" stroke="#16a34a" stroke-width="1.6" marker-end="url(#sarr)"/>
+  <text x="310" y="136" text-anchor="middle" font-size="10">resp (SSE)</text>
+  <line x1="200" y1="136" x2="140" y2="136" stroke="#334155" stroke-width="1.6" marker-end="url(#sarr)"/>
+  <text x="170" y="148" text-anchor="middle" font-size="10">resp</text>
+  <line x1="240" y1="104" x2="240" y2="430" stroke="#9333ea" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#sarrB)"/>
+  <text x="250" y="180" font-size="10" fill="#9333ea">model_request</text>
+  <text x="250" y="194" font-size="10" fill="#9333ea">+ model_response</text>
+
+  <!-- record tools -->
+  <line x1="140" y1="282" x2="200" y2="282" stroke="#334155" stroke-width="1.6" marker-end="url(#sarr)"/>
+  <text x="170" y="274" text-anchor="middle" font-size="10">tools/call</text>
+  <line x1="280" y1="282" x2="340" y2="282" stroke="#2563eb" stroke-width="1.6" marker-end="url(#sarrG)"/>
+  <text x="310" y="274" text-anchor="middle" font-size="10">forward</text>
+  <line x1="340" y1="294" x2="280" y2="294" stroke="#16a34a" stroke-width="1.6" marker-end="url(#sarr)"/>
+  <text x="310" y="306" text-anchor="middle" font-size="10">result</text>
+  <line x1="240" y1="286" x2="240" y2="430" stroke="#9333ea" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#sarrB)"/>
+  <text x="250" y="360" font-size="10" fill="#9333ea">tool_call + tool_result</text>
+
+  <!-- REPLAY -->
+  <text x="720" y="62" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3a8a">REPLAY --playback  (fully offline)</text>
+  <g font-size="11" fill="#334155">
+    <rect x="540" y="78" width="80" height="26" rx="6" fill="#eef2ff" stroke="#6366f1"/>
+    <text x="580" y="95" text-anchor="middle" font-weight="600">Agent</text>
+    <rect x="680" y="78" width="80" height="26" rx="6" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="720" y="95" text-anchor="middle" font-weight="600">ModelProxy</text>
+    <rect x="680" y="430" width="80" height="26" rx="6" fill="#fef3c7" stroke="#b45309"/>
+    <text x="720" y="447" text-anchor="middle" font-weight="600">Tape</text>
+    <rect x="540" y="260" width="80" height="26" rx="6" fill="#eef2ff" stroke="#6366f1"/>
+    <text x="580" y="277" text-anchor="middle" font-weight="600">Agent</text>
+    <rect x="680" y="260" width="80" height="26" rx="6" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="720" y="277" text-anchor="middle" font-weight="600">MCPProxy</text>
+  </g>
+  <!-- model playback: agent -> proxy, proxy reads tape -> agent. no provider. -->
+  <line x1="620" y1="100" x2="680" y2="100" stroke="#334155" stroke-width="1.6" marker-end="url(#sarr)"/>
+  <text x="650" y="92" text-anchor="middle" font-size="10">request</text>
+  <line x1="720" y1="104" x2="720" y2="430" stroke="#b45309" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#sarrR)"/>
+  <text x="730" y="180" font-size="10" fill="#b45309">pop_model_response</text>
+  <line x1="720" y1="424" x2="720" y2="116" stroke="#b45309" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#sarrR)"/>
+  <line x1="680" y1="124" x2="620" y2="124" stroke="#334155" stroke-width="1.6" marker-end="url(#sarr)"/>
+  <text x="650" y="136" text-anchor="middle" font-size="10">recorded resp</text>
+  <text x="640" y="160" font-size="10" fill="#16a34a" font-weight="600">✕ zero provider calls</text>
+
+  <!-- tools stub -->
+  <line x1="620" y1="282" x2="680" y2="282" stroke="#334155" stroke-width="1.6" marker-end="url(#sarr)"/>
+  <text x="650" y="274" text-anchor="middle" font-size="10">tools/call</text>
+  <line x1="720" y1="286" x2="720" y2="430" stroke="#b45309" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#sarrR)"/>
+  <text x="730" y="360" font-size="10" fill="#b45309">pop_tool_result(server,tool,hash)</text>
+  <line x1="720" y1="424" x2="720" y2="294" stroke="#b45309" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#sarrR)"/>
+  <line x1="680" y1="294" x2="620" y2="294" stroke="#334155" stroke-width="1.6" marker-end="url(#sarr)"/>
+  <text x="650" y="306" text-anchor="middle" font-size="10">stubbed result</text>
+  <text x="640" y="330" font-size="10" fill="#16a34a" font-weight="600">✕ zero server hits</text>
+</svg>

@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 620" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="arrLive" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrStub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b45309"/>
+    </marker>
+    <marker id="arrTape" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9333ea"/>
+    </marker>
+    <linearGradient id="vcrGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eff6ff"/>
+      <stop offset="1" stop-color="#dbeafe"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="960" height="620" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="480" y="34" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a">agent-vcr — two wire-level proxies, one tape</text>
+  <text x="480" y="56" text-anchor="middle" font-size="12" fill="#64748b">Record once. Replay offline. Zero agent code changes.</text>
+
+  <!-- Agent -->
+  <g>
+    <rect x="40" y="240" width="150" height="90" rx="10" fill="#eef2ff" stroke="#6366f1" stroke-width="2"/>
+    <text x="115" y="272" text-anchor="middle" font-size="14" font-weight="700" fill="#312e81">Agent</text>
+    <text x="115" y="292" text-anchor="middle" font-size="11" fill="#4338ca">Claude Code, Cursor,</text>
+    <text x="115" y="308" text-anchor="middle" font-size="11" fill="#4338ca">Codex-with-MCP …</text>
+  </g>
+
+  <!-- agent-vcr container -->
+  <rect x="250" y="110" width="430" height="430" rx="14" fill="url(#vcrGrad)" stroke="#2563eb" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="465" y="132" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">agent-vcr  (wired by env vars + MCP-config rewrite)</text>
+
+  <!-- Model proxy -->
+  <g>
+    <rect x="290" y="160" width="350" height="120" rx="9" fill="#ffffff" stroke="#1d4ed8" stroke-width="2"/>
+    <text x="465" y="184" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3a8a">Model Proxy  (local HTTP)</text>
+    <text x="465" y="204" text-anchor="middle" font-size="11" fill="#334155">/v1/messages  ·  /v1/chat/completions  (incl. SSE)</text>
+    <g font-size="11" fill="#1f2937">
+      <rect x="305" y="220" width="100" height="48" rx="6" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text x="355" y="240" text-anchor="middle" font-weight="600">record</text>
+      <text x="355" y="258" text-anchor="middle" font-size="10">forward + capture</text>
+      <rect x="415" y="220" width="100" height="48" rx="6" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text x="465" y="240" text-anchor="middle" font-weight="600">replay</text>
+      <text x="465" y="258" text-anchor="middle" font-size="10">model live</text>
+      <rect x="525" y="220" width="100" height="48" rx="6" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text x="575" y="240" text-anchor="middle" font-weight="600">--playback</text>
+      <text x="575" y="258" text-anchor="middle" font-size="10">recorded resp.</text>
+    </g>
+  </g>
+
+  <!-- MCP proxy -->
+  <g>
+    <rect x="290" y="310" width="350" height="120" rx="9" fill="#ffffff" stroke="#1d4ed8" stroke-width="2"/>
+    <text x="465" y="334" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3a8a">MCP Proxy  (tools)</text>
+    <text x="465" y="354" text-anchor="middle" font-size="11" fill="#334155">stdio (JSON-RPC)  ·  Streamable HTTP</text>
+    <g font-size="11" fill="#1f2937">
+      <rect x="305" y="370" width="155" height="48" rx="6" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text x="382" y="390" text-anchor="middle" font-weight="600">record</text>
+      <text x="382" y="408" text-anchor="middle" font-size="10">forward tool_call/result</text>
+      <rect x="470" y="370" width="155" height="48" rx="6" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text x="547" y="390" text-anchor="middle" font-weight="600">replay</text>
+      <text x="547" y="408" text-anchor="middle" font-size="10">stub by (server,tool,hash)</text>
+    </g>
+  </g>
+
+  <!-- Tape -->
+  <g>
+    <rect x="290" y="460" width="350" height="62" rx="9" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+    <text x="465" y="484" text-anchor="middle" font-size="14" font-weight="700" fill="#78350f">Tape — ./tapes/&lt;run-id&gt;.jsonl</text>
+    <text x="465" y="506" text-anchor="middle" font-size="11" fill="#92400e">vendor-neutral envelopes · monotonic seq · sha256(args)</text>
+  </g>
+
+  <!-- Outside world -->
+  <g>
+    <rect x="760" y="170" width="160" height="100" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="840" y="200" text-anchor="middle" font-size="14" font-weight="700" fill="#14532d">Provider</text>
+    <text x="840" y="220" text-anchor="middle" font-size="11" fill="#166534">Anthropic · OpenAI</text>
+    <text x="840" y="240" text-anchor="middle" font-size="11" fill="#166534">(*_BASE_URL)</text>
+
+    <rect x="760" y="320" width="160" height="100" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="840" y="350" text-anchor="middle" font-size="14" font-weight="700" fill="#14532d">MCP servers</text>
+    <text x="840" y="370" text-anchor="middle" font-size="11" fill="#166534">filesystem, git,</text>
+    <text x="840" y="386" text-anchor="middle" font-size="11" fill="#166534">browser, custom …</text>
+  </g>
+
+  <!-- Arrows: agent <-> proxies -->
+  <line x1="190" y1="270" x2="288" y2="220" stroke="#334155" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="200" y="248" font-size="10" fill="#475569">model calls</text>
+  <line x1="190" y1="300" x2="288" y2="360" stroke="#334155" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="200" y="338" font-size="10" fill="#475569">tool calls</text>
+
+  <!-- live arrows proxies -> outside (record / replay-default for model) -->
+  <line x1="640" y1="220" x2="758" y2="220" stroke="#2563eb" stroke-width="2" marker-end="url(#arrLive)"/>
+  <text x="690" y="212" text-anchor="middle" font-size="10" fill="#2563eb">live / record</text>
+  <line x1="640" y1="370" x2="758" y2="370" stroke="#2563eb" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#arrLive)"/>
+  <text x="690" y="362" text-anchor="middle" font-size="10" fill="#2563eb">record only</text>
+
+  <!-- tape write arrows -->
+  <line x1="465" y1="280" x2="465" y2="458" stroke="#9333ea" stroke-width="2" marker-end="url(#arrTape)"/>
+  <line x1="465" y1="430" x2="465" y2="458" stroke="#9333ea" stroke-width="2" marker-end="url(#arrTape)"/>
+
+  <!-- stub arrow (replay): tape -> MCP proxy (dashed amber) -->
+  <path d="M 320 458 C 270 430, 270 400, 305 395" fill="none" stroke="#b45309" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#arrStub)"/>
+  <text x="252" y="440" font-size="10" fill="#b45309">stub from tape</text>
+
+  <!-- legend -->
+  <g font-size="11" fill="#334155">
+    <text x="40" y="566" font-weight="700">Legend:</text>
+    <line x1="110" y1="562" x2="150" y2="562" stroke="#2563eb" stroke-width="2"/>
+    <text x="156" y="566">live upstream call</text>
+    <line x1="290" y1="562" x2="330" y2="562" stroke="#b45309" stroke-width="2" stroke-dasharray="5 3"/>
+    <text x="336" y="566">stubbed / recorded replay</text>
+    <line x1="520" y1="562" x2="560" y2="562" stroke="#9333ea" stroke-width="2"/>
+    <text x="566" y="566">tape write (record / passthrough)</text>
+  </g>
+</svg>
