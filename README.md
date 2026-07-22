@@ -35,6 +35,7 @@ side effects and no tool re-execution.** Zero agent code changes.
 - [Project layout](#project-layout)
 - [Security](#security)
 - [Scope (v1)](#scope-v1)
+- [Benchmarks](#benchmarks)
 - [Self-check](#self-check)
 - [License](#license)
 
@@ -177,6 +178,8 @@ One event per line, vendor-neutral:
 
 ```bash
 pipx install .
+# or, straight from the canonical repo:
+pipx install git+https://github.com/Victorchatter/AgentVCR.git
 ```
 
 Python 3.11+. **Zero runtime dependencies** — standard library only. Nothing to
@@ -246,6 +249,9 @@ agent-vcr/
 │   ├── mcp_proxy.py   # stdio + Streamable HTTP MCP, tools/call stub by hash
 │   ├── wiring.py      # MCP-config rewrite + agent spawn (backup → rewrite → restore)
 │   └── cli.py         # record / replay / mcp-stdio / list / show / diff
+├── assets/            # architecture.svg, record-replay.svg, benchmark.svg
+├── benchmarks/        # overhead.py — stdlib micro-bench (record overhead, replay, tape size)
+├── docs/              # long-form notes
 ├── selfcheck.py       # one integration self-check, no test framework
 ├── pyproject.toml     # zero deps, pipx-installable, agent-vcr entrypoint
 ├── LICENSE            # MIT
@@ -273,6 +279,39 @@ are plain JSONL — bring your own `gzip`).
 
 Deliberate simplifications are marked in the source with `# ponytail:` comments
 naming the ceiling and the upgrade path — the code reads as intent, not ignorance.
+
+## Benchmarks
+
+`benchmarks/overhead.py` is a stdlib-only micro-bench that drives the real
+`tape` / `model_proxy` / `mcp_proxy` modules against an in-process fake provider
+and fake MCP HTTP server — no network, no external deps. Run it with:
+
+```bash
+python benchmarks/overhead.py
+```
+
+Representative numbers (Python 3.14, Windows loopback, keep-alive clients,
+N=200 per row):
+
+| Metric | Direct / live | Through agent-vcr | Delta |
+|---|---|---|---|
+| Model request latency (ms/req) | 6.4 | 23.9 | +17.5 ms |
+| Tool call latency (ms/call) | 9.3 | 24.7 | +15.5 ms |
+| Replay model latency (ms/req) | — | 9.5 | 2.5× faster than live-through-proxy, 0 upstream calls |
+| Tape size per run (200 reqs + 200 calls) | — | ~175 KB | ~217 B/event |
+
+<p align="center">
+  <img src="./assets/benchmark.svg" alt="Bar chart: proxied vs direct latency and replay vs live-through-proxy" width="640"/>
+</p>
+
+The delta is **one extra localhost connection setup per request** — the proxy
+opens a fresh upstream connection each call (no pooling). Against a real remote
+upstream that one extra setup is negligible relative to the upstream's network
+latency; the proxy's own per-request work (byte-forward + one tape append) is
+sub-millisecond. Replay is faster than a live **proxied** run and makes **zero**
+upstream calls — no cost, no side-effects, deterministic — which is the point of
+replay, not raw speed against a fast fake. Full methodology and numbers
+reproduce from `python benchmarks/overhead.py`.
 
 ## Self-check
 

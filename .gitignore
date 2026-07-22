@@ -13,3 +13,8 @@ tapes/
 .vscode/
 .idea/
 .DS_Store
+
+# agent scratch / tooling
+.claude/
+.superpowers/
+PROMPT.md

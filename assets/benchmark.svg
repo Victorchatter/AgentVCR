@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="340" viewBox="0 0 640 340" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+  <rect width="640" height="340" fill="#ffffff"/>
+  <text x="320" y="26" text-anchor="middle" font-size="15" font-weight="600" fill="#111">agent-vcr: proxied vs direct latency (ms, lower is better)</text>
+
+  <!-- y gridlines + labels (0,10,20,25) -->
+  <g stroke="#e5e7eb" stroke-width="1">
+    <line x1="70" y1="260" x2="610" y2="260"/>
+    <line x1="70" y1="172" x2="610" y2="172" stroke-dasharray="3 3"/>
+    <line x1="70" y1="84" x2="610" y2="84" stroke-dasharray="3 3"/>
+  </g>
+  <g font-size="11" fill="#6b7280" text-anchor="end">
+    <text x="64" y="264">0</text>
+    <text x="64" y="176">10</text>
+    <text x="64" y="88">20</text>
+  </g>
+  <line x1="70" y1="40" x2="70" y2="260" stroke="#9ca3af" stroke-width="1"/>
+
+  <!-- bars: gray=#6b7280 direct/baseline, green=#2EA44F through agent-vcr. 1ms=8.8px, baseline y=260 -->
+  <!-- Group 1: Model request (direct 6.4, proxied 23.9) -->
+  <rect x="100" y="204" width="50" height="56" fill="#6b7280"/>
+  <rect x="158" y="50"  width="50" height="210" fill="#2EA44F"/>
+  <text x="125" y="198" text-anchor="middle" font-size="10" fill="#111">6.4</text>
+  <text x="183" y="44"  text-anchor="middle" font-size="10" fill="#111">23.9</text>
+  <text x="154" y="280" text-anchor="middle" font-size="12" fill="#111">Model req</text>
+
+  <!-- Group 2: Tool call (direct 9.3, proxied 24.7) -->
+  <rect x="250" y="178" width="50" height="82"  fill="#6b7280"/>
+  <rect x="308" y="43"  width="50" height="217" fill="#2EA44F"/>
+  <text x="275" y="172" text-anchor="middle" font-size="10" fill="#111">9.3</text>
+  <text x="333" y="37"  text-anchor="middle" font-size="10" fill="#111">24.7</text>
+  <text x="304" y="280" text-anchor="middle" font-size="12" fill="#111">Tool call</text>
+
+  <!-- Group 3: Replay (live-proxied 23.9 baseline, replay 9.5) -->
+  <rect x="400" y="50"  width="50" height="210" fill="#6b7280"/>
+  <rect x="458" y="176" width="50" height="84"  fill="#2EA44F"/>
+  <text x="425" y="44"  text-anchor="middle" font-size="10" fill="#111">23.9</text>
+  <text x="483" y="170" text-anchor="middle" font-size="10" fill="#111">9.5</text>
+  <text x="454" y="280" text-anchor="middle" font-size="12" fill="#111">Replay</text>
+
+  <!-- legend -->
+  <g font-size="11" fill="#111">
+    <rect x="120" y="306" width="12" height="12" fill="#6b7280"/>
+    <text x="138" y="316">direct / live baseline</text>
+    <rect x="290" y="306" width="12" height="12" fill="#2EA44F"/>
+    <text x="308" y="316">through agent-vcr</text>
+  </g>
+</svg>
